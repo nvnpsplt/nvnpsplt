@@ -1,0 +1,53 @@
+name: Update profile card
+
+on:
+  workflow_dispatch:
+  schedule:
+    # Weekly, Monday 06:00 UTC, so the card's stats don't freeze at whatever
+    # they were the day it was added.
+    - cron: '0 6 * * 1'
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/profile-card.yml
+
+concurrency:
+  group: profile-card
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Fetch both card themes
+        run: |
+          for theme in dark light; do
+            curl -fL --retry 3 --retry-delay 5 --max-time 60 \
+              "https://gh.crafter.run/nvnpsplt?theme=${theme}" \
+              -o "${theme}_mode.svg.tmp"
+            # curl -f rejects HTTP errors; this rejects a 200 that isn't an SVG,
+            # so a service error page never lands on the profile.
+            if ! head -c 512 "${theme}_mode.svg.tmp" | grep -qi '<svg'; then
+              echo "::error::${theme} theme did not return an SVG"
+              head -c 512 "${theme}_mode.svg.tmp"
+              exit 1
+            fi
+            mv "${theme}_mode.svg.tmp" "${theme}_mode.svg"
+          done
+
+      - name: Commit if changed
+        run: |
+          git add dark_mode.svg light_mode.svg
+          if git diff --cached --quiet; then
+            echo "Cards unchanged; nothing to commit."
+            exit 0
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'chore: refresh gh-ascii profile card'
+          git push
